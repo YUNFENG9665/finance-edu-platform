@@ -57,100 +57,121 @@ def show_fund_search():
             st.warning("请输入基金名称或代码")
             return
 
-        with st.spinner("正在搜索基金..."):
+        with st.spinner("正在调用MCP API搜索基金..."):
             # 使用MCP API搜索基金
             mcp = st.session_state.mcp_client
             try:
                 # 调用真实API
-                api_results = mcp.search_funds(
+                results = mcp.search_funds(
                     keyword=keyword,
                     category=None if category == "全部" else category,
                     page=0,
                     size=20
                 )
 
-                # 如果API返回数据，使用真实数据
-                if api_results and len(api_results) > 0:
-                    results = api_results
-                    st.info("✅ 使用真实MCP API数据")
-                else:
-                    # API没有返回数据，使用模拟数据作为演示
-                    results = generate_mock_fund_list(keyword)
-                    if results:
-                        st.info("⚠️ API未返回数据，显示模拟数据供演示")
+                # 检查API返回结果
+                if not results or len(results) == 0:
+                    st.warning(f"未找到与 '{keyword}' 相关的基金，请尝试其他关键词")
+                    return
+
+                st.success(f"✅ 从MCP API获取到 {len(results)} 只基金")
+
             except Exception as e:
-                st.warning(f"API调用失败，使用模拟数据: {str(e)}")
-                results = generate_mock_fund_list(keyword)
+                st.error(f"❌ MCP API调用失败: {str(e)}")
+                st.info("请检查网络连接或API配置，稍后重试")
+                return
 
-            if results:
-                st.success(f"找到 {len(results)} 只基金")
+            # 显示结果表格
+            df = pd.DataFrame(results)
 
-                # 显示结果表格
-                df = pd.DataFrame(results)
+            # 格式化显示
+            st.dataframe(
+                df,
+                column_config={
+                    "fundCode": "基金代码",
+                    "fundName": st.column_config.TextColumn("基金名称", width="large"),
+                    "category": "类型",
+                    "netValue": st.column_config.NumberColumn("最新净值", format="%.4f"),
+                    "dayGrowth": st.column_config.NumberColumn("日涨跌", format="%.2f%%"),
+                    "yearGrowth": st.column_config.NumberColumn("今年以来", format="%.2f%%"),
+                    "riskLevel": st.column_config.ProgressColumn("风险等级", min_value=1, max_value=5)
+                },
+                hide_index=True,
+                use_container_width=True
+            )
 
-                # 格式化显示
-                st.dataframe(
-                    df,
-                    column_config={
-                        "fundCode": "基金代码",
-                        "fundName": st.column_config.TextColumn("基金名称", width="large"),
-                        "category": "类型",
-                        "netValue": st.column_config.NumberColumn("最新净值", format="%.4f"),
-                        "dayGrowth": st.column_config.NumberColumn("日涨跌", format="%.2f%%"),
-                        "yearGrowth": st.column_config.NumberColumn("今年以来", format="%.2f%%"),
-                        "riskLevel": st.column_config.ProgressColumn("风险等级", min_value=1, max_value=5)
-                    },
-                    hide_index=True,
-                    use_container_width=True
-                )
+            # 选择基金查看详情
+            st.markdown("---")
+            selected_code = st.selectbox(
+                "选择一只基金查看详情",
+                options=df['fundCode'].tolist(),
+                format_func=lambda x: f"{x} - {df[df['fundCode']==x]['fundName'].values[0]}"
+            )
 
-                # 选择基金查看详情
-                st.markdown("---")
-                selected_code = st.selectbox(
-                    "选择一只基金查看详情",
-                    options=df['fundCode'].tolist(),
-                    format_func=lambda x: f"{x} - {df[df['fundCode']==x]['fundName'].values[0]}"
-                )
-
-                if st.button("查看详情", use_container_width=True):
-                    st.session_state.selected_fund = selected_code
-                    show_fund_detail(selected_code)
-            else:
-                st.warning("未找到相关基金，请调整搜索条件")
+            if st.button("查看详情", use_container_width=True):
+                st.session_state.selected_fund = selected_code
+                show_fund_detail(selected_code)
 
 def show_fund_detail(fund_code):
     """显示基金详情"""
     st.markdown("---")
     st.subheader(f"基金详情: {fund_code}")
 
-    # 基本信息
-    col1, col2, col3, col4 = st.columns(4)
+    with st.spinner("正在从MCP API获取基金详情..."):
+        mcp = st.session_state.mcp_client
+        try:
+            # 调用MCP API获取基金详细信息
+            fund_info = mcp.get_fund_info(fund_code)
 
-    with col1:
-        st.metric("最新净值", "2.3456", "0.23%")
-    with col2:
-        st.metric("基金规模", "50.2亿", "-2.1亿")
-    with col3:
-        st.metric("成立日期", "2018-06-20")
-    with col4:
-        st.metric("风险等级", "中高风险")
+            if not fund_info:
+                st.error(f"未找到基金 {fund_code} 的详细信息")
+                return
 
-    # 业绩表现
-    st.markdown("### 📈 业绩表现")
+            st.success("✅ 从MCP API获取基金详情成功")
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+            # 基本信息
+            col1, col2, col3, col4 = st.columns(4)
 
-    metrics = [
-        ("近1月", "+3.45%"),
-        ("近3月", "+8.67%"),
-        ("近6月", "+15.23%"),
-        ("近1年", "+25.34%"),
-        ("成立以来", "+134.56%")
-    ]
+            with col1:
+                nav = fund_info.get('netValue', 0)
+                nav_change = fund_info.get('dayGrowth', 0)
+                st.metric("最新净值", f"{nav:.4f}", f"{nav_change:+.2f}%")
+            with col2:
+                size = fund_info.get('fundSize', 0)
+                st.metric("基金规模", f"{size:.1f}亿")
+            with col3:
+                establish_date = fund_info.get('establishDate', 'N/A')
+                st.metric("成立日期", establish_date)
+            with col4:
+                risk_level = fund_info.get('riskLevel', 'N/A')
+                st.metric("风险等级", risk_level)
 
-    for col, (label, value) in zip([col1, col2, col3, col4, col5], metrics):
-        with col:
-            st.metric(label, value)
+            # 业绩表现
+            st.markdown("### 📈 业绩表现")
+
+            try:
+                # 调用MCP API获取基金业绩
+                performance = mcp.get_fund_returns(fund_code)
+
+                col1, col2, col3, col4, col5 = st.columns(5)
+
+                with col1:
+                    st.metric("近1月", f"{performance.get('1m', 0):+.2f}%")
+                with col2:
+                    st.metric("近3月", f"{performance.get('3m', 0):+.2f}%")
+                with col3:
+                    st.metric("近6月", f"{performance.get('6m', 0):+.2f}%")
+                with col4:
+                    st.metric("近1年", f"{performance.get('1y', 0):+.2f}%")
+                with col5:
+                    st.metric("成立以来", f"{performance.get('since_inception', 0):+.2f}%")
+
+            except Exception as e:
+                st.warning(f"无法获取业绩数据: {str(e)}")
+
+        except Exception as e:
+            st.error(f"❌ MCP API调用失败: {str(e)}")
+            st.info("请检查基金代码是否正确，或稍后重试")
 
 def show_nav_analysis():
     st.subheader("📈 净值走势分析")
@@ -173,58 +194,91 @@ def show_nav_analysis():
         )
 
     if st.button("📊 分析", type="primary", use_container_width=True):
-        # 生成模拟数据
-        dates, nav_data = generate_mock_nav_data(time_range)
+        if not fund_code:
+            st.warning("请输入基金代码")
+            return
 
-        # 创建图表
-        fig = go.Figure()
+        with st.spinner("正在从MCP API获取净值数据..."):
+            mcp = st.session_state.mcp_client
+            try:
+                # 调用MCP API获取基金净值历史
+                nav_history = mcp.get_fund_nav_history(fund_code, time_range=time_range)
 
-        # 添加净值线
-        fig.add_trace(go.Scatter(
-            x=dates,
-            y=nav_data,
-            mode='lines',
-            name='累计净值',
-            line=dict(color='#1f77b4', width=2),
-            fill='tozeroy',
-            fillcolor='rgba(31, 119, 180, 0.1)'
-        ))
+                if not nav_history or len(nav_history) == 0:
+                    st.warning(f"未找到基金 {fund_code} 的净值数据")
+                    return
 
-        # 如果选择了对比基准
-        if compare_index != "无":
-            index_data = nav_data * np.random.uniform(0.95, 1.05, len(nav_data))
-            fig.add_trace(go.Scatter(
-                x=dates,
-                y=index_data,
-                mode='lines',
-                name=compare_index,
-                line=dict(color='#ff7f0e', width=2, dash='dash')
-            ))
+                st.success(f"✅ 从MCP API获取到 {len(nav_history)} 条净值记录")
 
-        fig.update_layout(
-            title="净值走势图",
-            xaxis_title="日期",
-            yaxis_title="累计净值",
-            hovermode='x unified',
-            height=500,
-            template="plotly_white"
-        )
+                # 提取日期和净值数据
+                dates = [item['date'] for item in nav_history]
+                nav_data = [item['nav'] for item in nav_history]
 
-        st.plotly_chart(fig, use_container_width=True)
+                # 创建图表
+                fig = go.Figure()
 
-        # 统计指标
-        st.markdown("### 📊 统计指标")
+                # 添加净值线
+                fig.add_trace(go.Scatter(
+                    x=dates,
+                    y=nav_data,
+                    mode='lines',
+                    name='累计净值',
+                    line=dict(color='#1f77b4', width=2),
+                    fill='tozeroy',
+                    fillcolor='rgba(31, 119, 180, 0.1)'
+                ))
 
-        col1, col2, col3, col4 = st.columns(4)
+                # 如果选择了对比基准，获取基准数据
+                if compare_index != "无":
+                    try:
+                        index_data = mcp.get_index_data(compare_index, time_range=time_range)
+                        if index_data and len(index_data) > 0:
+                            index_dates = [item['date'] for item in index_data]
+                            index_values = [item['value'] for item in index_data]
+                            fig.add_trace(go.Scatter(
+                                x=index_dates,
+                                y=index_values,
+                                mode='lines',
+                                name=compare_index,
+                                line=dict(color='#ff7f0e', width=2, dash='dash')
+                            ))
+                    except Exception as e:
+                        st.info(f"无法获取 {compare_index} 数据: {str(e)}")
 
-        with col1:
-            st.metric("区间收益率", "+25.34%")
-        with col2:
-            st.metric("年化收益率", "+18.76%")
-        with col3:
-            st.metric("最大回撤", "-23.45%")
-        with col4:
-            st.metric("波动率", "18.23%")
+                fig.update_layout(
+                    title=f"{fund_code} 净值走势图",
+                    xaxis_title="日期",
+                    yaxis_title="累计净值",
+                    hovermode='x unified',
+                    height=500,
+                    template="plotly_white"
+                )
+
+                st.plotly_chart(fig, use_container_width=True)
+
+                # 获取统计指标
+                st.markdown("### 📊 统计指标")
+
+                try:
+                    # 调用MCP API获取基金性能指标
+                    metrics = mcp.get_fund_performance(fund_code, time_range=time_range)
+
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+                        st.metric("区间收益率", f"{metrics.get('return', 0):.2f}%")
+                    with col2:
+                        st.metric("年化收益率", f"{metrics.get('annual_return', 0):.2f}%")
+                    with col3:
+                        st.metric("最大回撤", f"{metrics.get('max_drawdown', 0):.2f}%")
+                    with col4:
+                        st.metric("波动率", f"{metrics.get('volatility', 0):.2f}%")
+                except Exception as e:
+                    st.warning(f"无法获取性能指标: {str(e)}")
+
+            except Exception as e:
+                st.error(f"❌ MCP API调用失败: {str(e)}")
+                st.info("请检查基金代码是否正确，或稍后重试")
 
 def show_holding_analysis():
     st.subheader("💼 持仓结构分析")
@@ -232,81 +286,99 @@ def show_holding_analysis():
     fund_code = st.text_input("基金代码", value="110022", key="holding_fund_code")
 
     if st.button("📊 查看持仓", type="primary", use_container_width=True):
-        col1, col2 = st.columns(2)
+        if not fund_code:
+            st.warning("请输入基金代码")
+            return
 
-        with col1:
-            st.markdown("#### 📈 十大重仓股")
+        with st.spinner("正在从MCP API获取持仓数据..."):
+            mcp = st.session_state.mcp_client
+            try:
+                # 调用MCP API获取基金持仓
+                holdings_data = mcp.get_fund_holdings(fund_code)
 
-            # 模拟十大重仓股数据
-            holdings = pd.DataFrame({
-                '股票代码': ['600519', '000858', '600036', '601318', '000333',
-                           '002475', '600276', '603288', '000568', '002594'],
-                '股票名称': ['贵州茅台', '五粮液', '招商银行', '中国平安', '美的集团',
-                           '立讯精密', '恒瑞医药', '海天味业', '泸州老窖', '比亚迪'],
-                '持仓占比': [8.45, 6.23, 5.67, 4.89, 4.32, 3.98, 3.76, 3.45, 3.21, 2.98],
-                '较上期': [0.23, -0.15, 0.45, 0.12, -0.08, 0.34, -0.11, 0.19, 0.06, 0.28]
-            })
+                if not holdings_data:
+                    st.error(f"未找到基金 {fund_code} 的持仓数据")
+                    return
 
-            st.dataframe(
-                holdings,
-                column_config={
-                    '持仓占比': st.column_config.ProgressColumn('持仓占比(%)', min_value=0, max_value=10),
-                    '较上期': st.column_config.NumberColumn('较上期(%)', format="%.2f")
-                },
-                hide_index=True,
-                use_container_width=True
-            )
+                st.success("✅ 从MCP API获取持仓数据成功")
 
-        with col2:
-            st.markdown("#### 🏭 行业分布")
+                col1, col2 = st.columns(2)
 
-            # 行业分布饼图
-            industries = pd.DataFrame({
-                '行业': ['食品饮料', '金融', '医药', '电子', '家电', '其他'],
-                '占比': [28.5, 22.3, 15.6, 12.4, 10.2, 11.0]
-            })
+                with col1:
+                    st.markdown("#### 📈 十大重仓股")
 
-            fig = px.pie(
-                industries,
-                values='占比',
-                names='行业',
-                title='行业分布',
-                hole=0.4
-            )
+                    # 从API数据构建DataFrame
+                    top_holdings = holdings_data.get('top_holdings', [])
+                    if top_holdings:
+                        holdings_df = pd.DataFrame(top_holdings)
+                        st.dataframe(
+                            holdings_df,
+                            column_config={
+                                'ratio': st.column_config.ProgressColumn('持仓占比(%)', min_value=0, max_value=10),
+                                'change': st.column_config.NumberColumn('较上期(%)', format="%.2f")
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+                    else:
+                        st.info("暂无重仓股数据")
 
-            fig.update_traces(
-                textposition='inside',
-                textinfo='percent+label'
-            )
+                with col2:
+                    st.markdown("#### 🏭 行业分布")
 
-            st.plotly_chart(fig, use_container_width=True)
+                    # 从API数据获取行业分布
+                    industry_dist = holdings_data.get('industry_distribution', [])
+                    if industry_dist:
+                        industries_df = pd.DataFrame(industry_dist)
 
-        # 资产配置
-        st.markdown("#### 💰 资产配置")
+                        fig = px.pie(
+                            industries_df,
+                            values='ratio',
+                            names='industry',
+                            title='行业分布',
+                            hole=0.4
+                        )
 
-        asset_allocation = pd.DataFrame({
-            '资产类别': ['股票', '债券', '现金', '其他'],
-            '占比': [92.5, 5.3, 1.8, 0.4]
-        })
+                        fig.update_traces(
+                            textposition='inside',
+                            textinfo='percent+label'
+                        )
 
-        fig = go.Figure(data=[
-            go.Bar(
-                x=asset_allocation['资产类别'],
-                y=asset_allocation['占比'],
-                text=asset_allocation['占比'].apply(lambda x: f'{x}%'),
-                textposition='outside',
-                marker_color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
-            )
-        ])
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("暂无行业分布数据")
 
-        fig.update_layout(
-            title='资产配置比例',
-            yaxis_title='占比(%)',
-            height=400,
-            template="plotly_white"
-        )
+                # 资产配置
+                st.markdown("#### 💰 资产配置")
 
-        st.plotly_chart(fig, use_container_width=True)
+                asset_allocation = holdings_data.get('asset_allocation', [])
+                if asset_allocation:
+                    asset_df = pd.DataFrame(asset_allocation)
+
+                    fig = go.Figure(data=[
+                        go.Bar(
+                            x=asset_df['asset_type'],
+                            y=asset_df['ratio'],
+                            text=asset_df['ratio'].apply(lambda x: f'{x:.1f}%'),
+                            textposition='outside',
+                            marker_color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+                        )
+                    ])
+
+                    fig.update_layout(
+                        title='资产配置比例',
+                        yaxis_title='占比(%)',
+                        height=400,
+                        template="plotly_white"
+                    )
+
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("暂无资产配置数据")
+
+            except Exception as e:
+                st.error(f"❌ MCP API调用失败: {str(e)}")
+                st.info("请检查基金代码是否正确，或稍后重试")
 
 def show_comprehensive_diagnosis():
     st.subheader("📊 综合诊断")
@@ -314,155 +386,123 @@ def show_comprehensive_diagnosis():
     fund_code = st.text_input("基金代码", value="110022", key="diag_fund_code")
 
     if st.button("🔍 开始诊断", type="primary", use_container_width=True):
-        with st.spinner("正在分析..."):
-            # 模拟诊断过程
-            import time
-            time.sleep(1)
+        if not fund_code:
+            st.warning("请输入基金代码")
+            return
 
-            # 雷达图 - 多维度评分
-            st.markdown("### 🎯 综合评分")
+        with st.spinner("正在从MCP API获取基金诊断数据..."):
+            mcp = st.session_state.mcp_client
+            try:
+                # 调用MCP API获取基金诊断信息
+                diagnosis = mcp.get_fund_diagnosis(fund_code)
 
-            categories = ['收益能力', '风险控制', '选股能力', '择时能力', '稳定性']
-            scores = [85, 75, 80, 70, 78]
+                if not diagnosis:
+                    st.error(f"未找到基金 {fund_code} 的诊断数据")
+                    return
 
-            fig = go.Figure()
+                st.success("✅ 从MCP API获取基金诊断数据成功")
 
-            fig.add_trace(go.Scatterpolar(
-                r=scores,
-                theta=categories,
-                fill='toself',
-                name='该基金',
-                line_color='#1f77b4'
-            ))
+                # 雷达图 - 多维度评分
+                st.markdown("### 🎯 综合评分")
 
-            fig.add_trace(go.Scatterpolar(
-                r=[70, 70, 70, 70, 70],
-                theta=categories,
-                fill='toself',
-                name='同类平均',
-                line_color='#ff7f0e',
-                opacity=0.5
-            ))
+                # 从API获取评分数据
+                ratings = diagnosis.get('ratings', {})
+                categories = ['收益能力', '风险控制', '选股能力', '择时能力', '稳定性']
+                scores = [
+                    ratings.get('return_ability', 0),
+                    ratings.get('risk_control', 0),
+                    ratings.get('stock_picking', 0),
+                    ratings.get('timing', 0),
+                    ratings.get('stability', 0)
+                ]
 
-            fig.update_layout(
-                polar=dict(
-                    radialaxis=dict(
-                        visible=True,
-                        range=[0, 100]
-                    )
-                ),
-                showlegend=True,
-                height=500
-            )
+                # 获取同类平均
+                peer_avg = diagnosis.get('peer_average', {})
+                peer_scores = [
+                    peer_avg.get('return_ability', 70),
+                    peer_avg.get('risk_control', 70),
+                    peer_avg.get('stock_picking', 70),
+                    peer_avg.get('timing', 70),
+                    peer_avg.get('stability', 70)
+                ]
 
-            st.plotly_chart(fig, use_container_width=True)
+                fig = go.Figure()
 
-            # 诊断结果
-            st.markdown("### 📋 诊断结果")
+                fig.add_trace(go.Scatterpolar(
+                    r=scores,
+                    theta=categories,
+                    fill='toself',
+                    name='该基金',
+                    line_color='#1f77b4'
+                ))
 
-            col1, col2 = st.columns(2)
+                fig.add_trace(go.Scatterpolar(
+                    r=peer_scores,
+                    theta=categories,
+                    fill='toself',
+                    name='同类平均',
+                    line_color='#ff7f0e',
+                    opacity=0.5
+                ))
 
-            with col1:
-                st.success("""
-                **✅ 优势**
-                - 长期业绩优秀，超越同类平均
-                - 基金经理经验丰富，管理稳定
-                - 持仓结构合理，行业分散充分
-                - 费率合理，性价比高
-                """)
+                fig.update_layout(
+                    polar=dict(
+                        radialaxis=dict(
+                            visible=True,
+                            range=[0, 100]
+                        )
+                    ),
+                    showlegend=True,
+                    height=500
+                )
 
-            with col2:
-                st.warning("""
-                **⚠️ 风险提示**
-                - 股票仓位较高，市场波动影响大
-                - 重仓消费行业，行业风险需关注
-                - 规模较大，灵活性受限
-                - 短期回撤风险偏高
-                """)
+                st.plotly_chart(fig, use_container_width=True)
 
-            # 投资建议
-            st.markdown("### 💡 投资建议")
+                # 诊断结果
+                st.markdown("### 📋 诊断结果")
 
-            st.info("""
-            **适合人群**: 风险承受能力中高、投资期限3年以上的投资者
+                col1, col2 = st.columns(2)
 
-            **建议配置比例**: 30-50%（作为组合核心持仓）
+                with col1:
+                    # 从API获取优势
+                    strengths = diagnosis.get('strengths', [])
+                    if strengths:
+                        strengths_text = "**✅ 优势**\n" + "\n".join([f"- {s}" for s in strengths])
+                        st.success(strengths_text)
+                    else:
+                        st.info("暂无优势分析")
 
-            **投资方式**: 建议采用定投方式，平滑风险
+                with col2:
+                    # 从API获取风险提示
+                    risks = diagnosis.get('risks', [])
+                    if risks:
+                        risks_text = "**⚠️ 风险提示**\n" + "\n".join([f"- {r}" for r in risks])
+                        st.warning(risks_text)
+                    else:
+                        st.info("暂无风险提示")
 
-            **持有建议**: 长期持有，定期再平衡
+                # 投资建议
+                st.markdown("### 💡 投资建议")
 
-            **风险提示**: 市场有风险，投资需谨慎
-            """)
+                suggestions = diagnosis.get('suggestions', {})
+                if suggestions:
+                    suggestion_text = f"""
+                    **适合人群**: {suggestions.get('suitable_investors', 'N/A')}
 
-# 辅助函数
+                    **建议配置比例**: {suggestions.get('allocation_ratio', 'N/A')}
 
-def generate_mock_fund_list(keyword):
-    """生成模拟基金列表"""
-    funds = [
-        {
-            "fundCode": "110022",
-            "fundName": "易方达消费行业股票",
-            "category": "偏股型",
-            "netValue": 4.2350,
-            "dayGrowth": 1.23,
-            "yearGrowth": 15.67,
-            "riskLevel": 4
-        },
-        {
-            "fundCode": "161725",
-            "fundName": "招商中证白酒指数",
-            "category": "指数型",
-            "netValue": 1.2180,
-            "dayGrowth": 0.89,
-            "yearGrowth": 22.34,
-            "riskLevel": 5
-        },
-        {
-            "fundCode": "163406",
-            "fundName": "兴全商业模式优选混合",
-            "category": "混合型",
-            "netValue": 3.5678,
-            "dayGrowth": -0.45,
-            "yearGrowth": 18.92,
-            "riskLevel": 4
-        },
-        {
-            "fundCode": "110008",
-            "fundName": "易方达稳健收益债券",
-            "category": "债券型",
-            "netValue": 1.4567,
-            "dayGrowth": 0.05,
-            "yearGrowth": 4.23,
-            "riskLevel": 2
-        }
-    ]
+                    **投资方式**: {suggestions.get('investment_method', 'N/A')}
 
-    if keyword:
-        funds = [f for f in funds if keyword.lower() in f['fundName'].lower()]
+                    **持有建议**: {suggestions.get('holding_advice', 'N/A')}
 
-    return funds
+                    **风险提示**: 市场有风险，投资需谨慎
+                    """
+                    st.info(suggestion_text)
+                else:
+                    st.info("**风险提示**: 市场有风险，投资需谨慎")
 
-def generate_mock_nav_data(time_range):
-    """生成模拟净值数据"""
-    # 根据时间范围确定天数
-    days_map = {
-        "近1月": 30,
-        "近3月": 90,
-        "近6月": 180,
-        "近1年": 365,
-        "近3年": 1095,
-        "成立以来": 2000
-    }
+            except Exception as e:
+                st.error(f"❌ MCP API调用失败: {str(e)}")
+                st.info("请检查基金代码是否正确，或稍后重试")
 
-    days = days_map.get(time_range, 365)
-
-    # 生成日期序列
-    end_date = datetime.now()
-    dates = [end_date - timedelta(days=i) for i in range(days, 0, -1)]
-
-    # 生成模拟净值数据（随机游走）
-    returns = np.random.normal(0.0005, 0.015, days)
-    nav_data = 1.0 * np.exp(np.cumsum(returns))
-
-    return dates, nav_data
+# 辅助函数已移除 - 所有数据均通过MCP API获取

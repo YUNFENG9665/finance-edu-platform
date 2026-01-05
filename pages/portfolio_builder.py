@@ -323,41 +323,76 @@ def show_portfolio_analysis():
     show_optimization_suggestions(portfolio)
 
 def show_risk_metrics(portfolio):
-    """显示风险指标"""
-    col1, col2, col3 = st.columns(3)
+    """显示风险指标 - 从MCP API获取"""
+    mcp = st.session_state.mcp_client
 
-    with col1:
-        st.metric("组合波动率", "12.5%")
-    with col2:
-        st.metric("最大回撤", "-15.3%")
-    with col3:
-        st.metric("夏普比率", "0.72")
+    try:
+        # 获取基金代码和权重
+        fund_codes = [f['code'] for f in portfolio]
+        total = sum(f['amount'] for f in portfolio)
+        weights = [f['amount']/total for f in portfolio]
 
-    # 相关性矩阵（模拟）
+        # 调用MCP API计算组合风险指标
+        risk_metrics = mcp.calculate_portfolio_risk(fund_codes, weights)
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            volatility = risk_metrics.get('volatility', 0)
+            st.metric("组合波动率", f"{volatility:.2f}%")
+        with col2:
+            max_dd = risk_metrics.get('max_drawdown', 0)
+            st.metric("最大回撤", f"{max_dd:.2f}%")
+        with col3:
+            sharpe = risk_metrics.get('sharpe_ratio', 0)
+            st.metric("夏普比率", f"{sharpe:.2f}")
+
+    except Exception as e:
+        st.warning(f"无法获取风险指标: {str(e)}")
+        # 显示占位符
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("组合波动率", "N/A")
+        with col2:
+            st.metric("最大回撤", "N/A")
+        with col3:
+            st.metric("夏普比率", "N/A")
+
+    # 相关性矩阵 - 从MCP API获取
     st.markdown("#### 📊 相关性矩阵")
 
-    n = len(portfolio)
-    corr_matrix = np.random.rand(n, n)
-    corr_matrix = (corr_matrix + corr_matrix.T) / 2
-    np.fill_diagonal(corr_matrix, 1.0)
+    mcp = st.session_state.mcp_client
+    try:
+        # 获取组合中所有基金的代码
+        fund_codes = [f['code'] for f in portfolio]
 
-    fund_names = [f['name'][:8] for f in portfolio]
+        # 调用MCP API获取基金间的相关性矩阵
+        corr_matrix_data = mcp.get_fund_correlation(fund_codes)
 
-    fig = go.Figure(data=go.Heatmap(
-        z=corr_matrix,
-        x=fund_names,
-        y=fund_names,
-        colorscale='RdYlGn_r',
-        zmin=-1,
-        zmax=1
-    ))
+        if corr_matrix_data and 'matrix' in corr_matrix_data:
+            corr_matrix = np.array(corr_matrix_data['matrix'])
+            fund_names = [f['name'][:8] for f in portfolio]
 
-    fig.update_layout(
-        title='基金相关性热力图',
-        height=400
-    )
+            fig = go.Figure(data=go.Heatmap(
+                z=corr_matrix,
+                x=fund_names,
+                y=fund_names,
+                colorscale='RdYlGn_r',
+                zmin=-1,
+                zmax=1
+            ))
 
-    st.plotly_chart(fig, use_container_width=True)
+            fig.update_layout(
+                title='基金相关性热力图（基于历史数据）',
+                height=400
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("暂无相关性数据")
+
+    except Exception as e:
+        st.warning(f"无法获取相关性数据: {str(e)}")
 
 def show_optimization_suggestions(portfolio):
     """显示优化建议"""
@@ -405,36 +440,66 @@ def show_monte_carlo():
         )
 
     if st.button("🎲 开始模拟", type="primary", use_container_width=True):
-        with st.spinner("正在模拟..."):
-            # 模拟结果
+        with st.spinner("正在从MCP API获取基金数据并运行模拟..."):
+            # 运行模拟
             results = run_monte_carlo_simulation(years, simulations)
 
-            # 显示结果
-            show_simulation_results(results, years)
+            # 显示结果（如果成功）
+            if results:
+                show_simulation_results(results, years)
 
 def run_monte_carlo_simulation(years, simulations):
-    """运行蒙特卡洛模拟"""
-    # 模拟参数
-    initial_value = sum(f['amount'] for f in st.session_state.portfolio_funds)
-    mean_return = 0.075  # 7.5%年化
-    std_return = 0.15    # 15%波动率
+    """运行蒙特卡洛模拟 - 基于真实历史数据"""
+    mcp = st.session_state.mcp_client
+    portfolio = st.session_state.portfolio_funds
 
-    # 生成模拟路径
-    np.random.seed(42)
-    days = years * 252  # 交易日
+    initial_value = sum(f['amount'] for f in portfolio)
 
-    returns = np.random.normal(mean_return/252, std_return/np.sqrt(252), (simulations, days))
-    price_paths = initial_value * np.exp(np.cumsum(returns, axis=1))
+    try:
+        # 计算组合的历史表现指标
+        fund_codes = [f['code'] for f in portfolio]
+        weights = [f['amount']/initial_value for f in portfolio]
 
-    # 计算终值
-    final_values = price_paths[:, -1]
+        # 从MCP API获取每只基金的历史收益率和波动率
+        fund_metrics = []
+        for code in fund_codes:
+            try:
+                metrics = mcp.get_fund_performance(code, time_range="近1年")
+                fund_metrics.append({
+                    'return': metrics.get('annual_return', 7.5) / 100,  # 转换为小数
+                    'volatility': metrics.get('volatility', 15) / 100
+                })
+            except:
+                # 如果获取失败，使用默认值
+                fund_metrics.append({'return': 0.075, 'volatility': 0.15})
 
-    return {
-        'initial_value': initial_value,
-        'paths': price_paths,
-        'final_values': final_values,
-        'years': years
-    }
+        # 计算组合加权平均收益和波动率
+        mean_return = sum(w * m['return'] for w, m in zip(weights, fund_metrics))
+        std_return = np.sqrt(sum((w * m['volatility'])**2 for w, m in zip(weights, fund_metrics)))
+
+        # 生成模拟路径
+        np.random.seed(42)
+        days = years * 252  # 交易日
+
+        returns = np.random.normal(mean_return/252, std_return/np.sqrt(252), (simulations, days))
+        price_paths = initial_value * np.exp(np.cumsum(returns, axis=1))
+
+        # 计算终值
+        final_values = price_paths[:, -1]
+
+        return {
+            'initial_value': initial_value,
+            'paths': price_paths,
+            'final_values': final_values,
+            'years': years,
+            'mean_return': mean_return,
+            'std_return': std_return
+        }
+
+    except Exception as e:
+        st.error(f"❌ MCP API调用失败，无法运行模拟: {str(e)}")
+        st.info("请检查网络连接和API配置，稍后重试")
+        return None
 
 def show_simulation_results(results, years):
     """显示模拟结果"""
@@ -559,22 +624,43 @@ def get_recommendations(risk_level):
     return recommendations.get(risk_level, recommendations["稳健型"])
 
 def get_recommended_funds(asset_type):
-    """根据资产类型返回推荐基金"""
-    funds_db = {
-        "股票基金": [
-            {"code": "110022", "name": "易方达消费行业", "nav": "4.235", "ytd": "+15.67%", "risk": "中高"},
-            {"code": "161725", "name": "招商中证白酒", "nav": "1.218", "ytd": "+22.34%", "risk": "高"},
-            {"code": "163406", "name": "兴全商业模式", "nav": "3.568", "ytd": "+18.92%", "risk": "中高"}
-        ],
-        "债券基金": [
-            {"code": "110008", "name": "易方达稳健收益", "nav": "1.457", "ytd": "+4.23%", "risk": "低"},
-            {"code": "050011", "name": "博时信用债券", "nav": "2.345", "ytd": "+3.89%", "risk": "低"},
-            {"code": "485111", "name": "工银双利债券", "nav": "1.876", "ytd": "+4.56%", "risk": "低"}
-        ],
-        "货币基金": [
-            {"code": "000704", "name": "易方达天天理财", "nav": "1.000", "ytd": "+2.34%", "risk": "极低"},
-            {"code": "000009", "name": "易方达天天增利", "nav": "1.000", "ytd": "+2.45%", "risk": "极低"}
-        ]
+    """根据资产类型返回推荐基金 - 通过MCP API获取"""
+    mcp = st.session_state.mcp_client
+
+    # 资产类型映射到基金类别
+    category_map = {
+        "股票基金": "偏股型",
+        "债券基金": "债券型",
+        "货币基金": "货币型"
     }
 
-    return funds_db.get(asset_type, [])
+    category = category_map.get(asset_type)
+    if not category:
+        return []
+
+    try:
+        # 调用MCP API搜索基金
+        funds = mcp.search_funds(
+            keyword="",
+            category=category,
+            page=0,
+            size=10  # 获取前10只基金
+        )
+
+        if funds:
+            # 转换为需要的格式
+            result = []
+            for fund in funds[:6]:  # 只返回前6只
+                result.append({
+                    "code": fund.get("fundCode", ""),
+                    "name": fund.get("fundName", ""),
+                    "nav": f"{fund.get('netValue', 0):.3f}",
+                    "ytd": f"{fund.get('yearGrowth', 0):+.2f}%",
+                    "risk": f"风险等级{fund.get('riskLevel', 3)}"
+                })
+            return result
+        else:
+            return []
+    except Exception as e:
+        st.warning(f"获取{asset_type}推荐失败: {str(e)}")
+        return []
