@@ -53,9 +53,34 @@ def show_fund_search():
         )
 
     if st.button("🔍 搜索", type="primary", use_container_width=True):
-        with st.spinner("正在搜索..."):
-            # 模拟搜索结果
-            results = generate_mock_fund_list(keyword)
+        if not keyword:
+            st.warning("请输入基金名称或代码")
+            return
+
+        with st.spinner("正在搜索基金..."):
+            # 使用MCP API搜索基金
+            mcp = st.session_state.mcp_client
+            try:
+                # 调用真实API
+                api_results = mcp.search_funds(
+                    keyword=keyword,
+                    category=None if category == "全部" else category,
+                    page=0,
+                    size=20
+                )
+
+                # 如果API返回数据，使用真实数据
+                if api_results and len(api_results) > 0:
+                    results = api_results
+                    st.info("✅ 使用真实MCP API数据")
+                else:
+                    # API没有返回数据，使用模拟数据作为演示
+                    results = generate_mock_fund_list(keyword)
+                    if results:
+                        st.info("⚠️ API未返回数据，显示模拟数据供演示")
+            except Exception as e:
+                st.warning(f"API调用失败，使用模拟数据: {str(e)}")
+                results = generate_mock_fund_list(keyword)
 
             if results:
                 st.success(f"找到 {len(results)} 只基金")
