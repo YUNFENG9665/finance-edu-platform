@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-盈米金融教学平台 - Web应用主入口
+金融教学平台 - Web应用主入口
 Finance Education Platform - Streamlit Web App
 
-Version: 1.0.0
+Version: 2.0.0
 Author: AI Assistant
 Date: 2026-01-05
 """
@@ -13,10 +13,6 @@ import streamlit as st
 import sys
 import os
 
-# 添加父目录到路径
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from finance_education_platform import FinanceEducationPlatform
 from utils.auth import get_auth_manager, show_login_page, logout_user
 from utils.database import get_db_manager
 from utils.mcp_client import get_mcp_client
@@ -138,8 +134,6 @@ def init_session_state():
         st.session_state.authenticated = False
     if 'user' not in st.session_state:
         st.session_state.user = None
-    if 'platform' not in st.session_state:
-        st.session_state.platform = FinanceEducationPlatform()
     if 'db_manager' not in st.session_state:
         st.session_state.db_manager = get_db_manager()
     if 'mcp_client' not in st.session_state:
